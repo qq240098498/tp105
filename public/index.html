@@ -37,10 +37,20 @@
           <button type="button" id="rule-new">新建规则</button>
         </div>
       </div>
+      <p class="level-dist" id="rule-level-dist"></p>
+      <div class="batch-bar hidden" id="batch-bar">
+        <span id="batch-count">已选 0 条</span>
+        <label data-field="batchLevel">级别改为
+          <select id="batch-level"></select>
+        </label>
+        <button type="button" id="batch-preview-btn">预演</button>
+        <button type="button" id="batch-clear" class="ghost">清空选择</button>
+      </div>
       <div class="table-wrap">
         <table class="grid">
           <thead>
             <tr>
+              <th class="check-col"><input type="checkbox" id="rule-select-all" title="全选当前列表"></th>
               <th>编码</th>
               <th>名称</th>
               <th>级别</th>
@@ -56,6 +66,8 @@
         </table>
       </div>
       <p class="empty-tip hidden" id="rule-empty">当前筛选条件下没有规则</p>
+
+      <div class="batch-preview hidden" id="batch-preview"></div>
 
       <form class="entry-form hidden" id="rule-form" autocomplete="off">
         <h3 id="rule-form-title">新建规则</h3>
@@ -149,6 +161,8 @@
               <th>文件</th>
               <th>行号</th>
               <th>那一行的内容</th>
+              <th>处置状态</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody id="hit-body"></tbody>

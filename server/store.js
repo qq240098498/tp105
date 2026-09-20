@@ -2,12 +2,17 @@ const fs = require('fs');
 const path = require('path');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
-const DATA_FILE = path.join(DATA_DIR, 'db.json');
-const TEMP_FILE = path.join(DATA_DIR, 'db.json.tmp');
+// 数据文件的位置可以用环境变量盖掉，方便开隔离的实例做验证
+const DATA_FILE = process.env.DATA_FILE
+  ? path.resolve(process.env.DATA_FILE)
+  : path.join(DATA_DIR, 'db.json');
+const TEMP_FILE = `${DATA_FILE}.tmp`;
 
 const LEVELS = ['提示', '警告', '错误'];
 const STATUSES = ['启用', '停用'];
 const FILE_TYPES = ['全部', 'js', 'sh', 'md', 'yml'];
+// 命中条目的处置状态：正常 → 已忽略；规则级别变动后已忽略的转成待重新确认
+const HIT_STATES = ['正常', '已忽略', '待重新确认'];
 const MAX_CODE_LENGTH = 20;
 const MAX_RULE_NAME_LENGTH = 40;
 const MAX_PATTERN_LENGTH = 60;
@@ -335,6 +340,91 @@ function normalizeFile(item, fallbackIndex) {
   };
 }
 
+// 非负整数以外的计数一律按 0 看
+function pickCount(value) {
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+// 命中的汇总：按级别、按规则、按文件分别计数，再带上处置状态的数目
+function summarizeHits(hits) {
+  const byLevel = {};
+  LEVELS.forEach((item) => { byLevel[item] = 0; });
+  const byRuleMap = new Map();
+  const byFileMap = new Map();
+  let ignored = 0;
+  let recheck = 0;
+  hits.forEach((hit) => {
+    byLevel[hit.level] = (byLevel[hit.level] || 0) + 1;
+    if (hit.state === '已忽略') ignored += 1;
+    if (hit.state === '待重新确认') recheck += 1;
+    if (!byRuleMap.has(hit.code)) {
+      byRuleMap.set(hit.code, { code: hit.code, ruleName: hit.ruleName, level: hit.level, count: 0 });
+    }
+    byRuleMap.get(hit.code).count += 1;
+    if (!byFileMap.has(hit.path)) byFileMap.set(hit.path, { path: hit.path, fileType: hit.fileType, count: 0 });
+    byFileMap.get(hit.path).count += 1;
+  });
+  return {
+    total: hits.length,
+    ignored,
+    recheck,
+    byLevel,
+    byRule: Array.from(byRuleMap.values()).sort((a, b) => (a.code < b.code ? -1 : 1)),
+    byFile: Array.from(byFileMap.values()).sort((a, b) => (a.path < b.path ? -1 : 1)),
+  };
+}
+
+// 把一条命中整理成固定结构，缺规则、缺文件、缺行号的条目没法定位，一律丢掉
+function normalizeHit(item, fallbackIndex) {
+  const source = item && typeof item === 'object' ? item : {};
+  const ruleId = typeof source.ruleId === 'string' ? source.ruleId : '';
+  const fileId = typeof source.fileId === 'string' ? source.fileId : '';
+  const lineNo = Number.isInteger(source.lineNo) && source.lineNo > 0 ? source.lineNo : 0;
+  if (!ruleId || !fileId || !lineNo) return null;
+  return {
+    id: typeof source.id === 'string' && source.id ? source.id : `hit-restored-${fallbackIndex + 1}`,
+    ruleId,
+    code: typeof source.code === 'string' ? source.code : '',
+    ruleName: typeof source.ruleName === 'string' ? source.ruleName : '',
+    level: LEVELS.includes(source.level) ? source.level : LEVELS[0],
+    pattern: typeof source.pattern === 'string' ? source.pattern : '',
+    fileId,
+    path: typeof source.path === 'string' ? source.path : '',
+    fileType: typeof source.fileType === 'string' ? source.fileType : '',
+    lineNo,
+    lineText: typeof source.lineText === 'string' ? source.lineText : '',
+    state: HIT_STATES.includes(source.state) ? source.state : HIT_STATES[0],
+  };
+}
+
+// 上一轮扫描结果：没有扫过就是 null；汇总由命中现算，保证与命中清单始终一致
+function normalizeScan(item) {
+  const source = item && typeof item === 'object' ? item : null;
+  if (!source) return null;
+  const rawHits = Array.isArray(source.hits) ? source.hits : [];
+  const hits = [];
+  const seen = new Set();
+  rawHits.forEach((raw, index) => {
+    const hit = normalizeHit(raw, index);
+    if (!hit) return;
+    const key = `${hit.ruleId}${hit.fileId}${hit.lineNo}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    hits.push(hit);
+  });
+  return {
+    scannedAt: typeof source.scannedAt === 'string' ? source.scannedAt : '',
+    enabledRules: pickCount(source.enabledRules),
+    rulesUsed: pickCount(source.rulesUsed),
+    filesInScope: pickCount(source.filesInScope),
+    filesTotal: pickCount(source.filesTotal),
+    rulesTotal: pickCount(source.rulesTotal),
+    warning: typeof source.warning === 'string' ? source.warning : '',
+    hits,
+    summary: summarizeHits(hits),
+  };
+}
+
 // 整份数据保证规则与文件结构一致，缺编号、缺名称、缺路径的条目一律丢掉
 function normalize(raw) {
   const source = raw && typeof raw === 'object' ? raw : {};
@@ -368,7 +458,7 @@ function normalize(raw) {
     files.push(file);
   });
 
-  return { rules, files };
+  return { rules, files, lastScan: normalizeScan(source.lastScan) };
 }
 
 // 读取数据文件：文件缺失或内容损坏时回落到初始数据并立刻补写
@@ -377,7 +467,7 @@ function load() {
     const raw = fs.readFileSync(DATA_FILE, 'utf8');
     return normalize(JSON.parse(raw));
   } catch (err) {
-    const data = { rules: seedRules(), files: seedFiles() };
+    const data = { rules: seedRules(), files: seedFiles(), lastScan: null };
     save(data);
     return data;
   }
@@ -385,7 +475,7 @@ function load() {
 
 // 先写临时文件再改名，写入中途被打断也不会把正式数据文件写坏
 function save(data) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
   const text = `${JSON.stringify(normalize(data), null, 2)}\n`;
   fs.writeFileSync(TEMP_FILE, text, 'utf8');
   fs.renameSync(TEMP_FILE, DATA_FILE);
@@ -399,9 +489,12 @@ module.exports = {
   normalize,
   normalizeRule,
   normalizeFile,
+  normalizeScan,
+  summarizeHits,
   LEVELS,
   STATUSES,
   FILE_TYPES,
+  HIT_STATES,
   MAX_CODE_LENGTH,
   MAX_RULE_NAME_LENGTH,
   MAX_PATTERN_LENGTH,

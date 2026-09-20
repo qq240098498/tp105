@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { load, save, FILE_TYPES, MAX_PATH_LENGTH, MAX_CONTENT_LENGTH, MAX_NOTE_LENGTH } = require('./store');
 const { ApiError, pickText } = require('./errors');
+const { pruneScanHits } = require('./scan');
 
 // 路径只允许字母数字、点、下划线、短横线与斜线，后缀必须是认得的几种
 const PATH_PATTERN = /^[A-Za-z0-9._/-]+$/;
@@ -130,6 +131,7 @@ function deleteFile(id) {
   const index = data.files.findIndex((item) => item.id === id);
   if (index === -1) throw new ApiError(404, 'FILE_NOT_FOUND', '这个文件不存在或已被移出清单', '');
   const [removed] = data.files.splice(index, 1);
+  pruneScanHits(data, (hit) => hit.fileId !== removed.id);
   save(data);
   return { id: removed.id, path: removed.path };
 }

@@ -383,3 +383,98 @@ label.full input {
   display: flex;
   gap: 10px;
 }
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.check-col {
+  width: 30px;
+  text-align: center;
+}
+
+.level-dist {
+  margin: 0 0 10px;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
+.batch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  font-size: 12.5px;
+}
+
+.batch-bar label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.batch-preview {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--warn-line);
+  border-radius: 6px;
+  background: #fffdf6;
+}
+
+.batch-preview h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.batch-preview h4 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.preview-grid {
+  min-width: 0;
+}
+
+.preview-block {
+  margin-top: 10px;
+}
+
+.preview-line {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+}
+
+.skip-row td {
+  color: var(--ink-soft);
+}
+
+.recheck-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.st-ignored {
+  background: #eceff3;
+  color: var(--ink-soft);
+}
+
+.st-recheck {
+  background: var(--warn-bg);
+  color: #8a5a00;
+}
+
+tr.hit-ignored td {
+  color: #9aa7b4;
+}
+
+tr.hit-recheck td {
+  background: #fffaf0;
+}

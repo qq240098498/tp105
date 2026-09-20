@@ -30,6 +30,23 @@ app.post('/api/rules', (req, res) => {
   }
 });
 
+// 批量改级别：先预演再执行，两个接口共用同一份规划，数字必然对得上
+app.post('/api/rules/batch-level/preview', (req, res) => {
+  try {
+    res.json(api.previewBatchLevel(req.body));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/rules/batch-level', (req, res) => {
+  try {
+    res.json(api.applyBatchLevel(req.body));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 app.get('/api/rules/:id', (req, res) => {
   try {
     res.json(api.getRule(req.params.id));
@@ -102,6 +119,21 @@ app.post('/api/scan', (req, res) => {
       fileId: body.fileId,
       ruleId: body.ruleId,
     }));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// 上一轮扫描结果：页面打开时先拉这个，还没扫过就是 null
+app.get('/api/scan/last', (_req, res) => {
+  res.json({ scan: api.getLastScan() });
+});
+
+// 改某条命中的处置状态：正常、已忽略、待重新确认
+app.patch('/api/scan/last/hits/:id', (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    res.json(api.setHitState(req.params.id, body.state));
   } catch (err) {
     sendError(res, err);
   }

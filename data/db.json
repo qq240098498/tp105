@@ -10,7 +10,7 @@
       "pattern": "console.log",
       "note": "上线前要换成统一日志",
       "createdAt": "2026-09-02T02:00:00.000Z",
-      "updatedAt": "2026-09-02T02:00:00.000Z"
+      "updatedAt": "2026-09-20T11:56:29.416Z"
     },
     {
       "id": "rule-1002",
@@ -254,5 +254,6 @@
       "createdAt": "2026-09-02T03:00:00.000Z",
       "updatedAt": "2026-09-02T03:00:00.000Z"
     }
-  ]
+  ],
+  "lastScan": null
 }

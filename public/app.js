@@ -12,6 +12,10 @@ const state = {
   editingRuleId: '',
   editingFileId: '',
   lastScan: null,
+  selectedRuleIds: new Set(),
+  levelDistribution: {},
+  rulesTotal: 0,
+  batchPlan: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -125,9 +129,14 @@ async function loadRules() {
   state.levels = payload.levels || [];
   state.statuses = payload.statuses || [];
   state.fileTypes = payload.fileTypes || [];
+  state.levelDistribution = payload.levelDistribution || {};
+  state.rulesTotal = payload.rulesTotal || 0;
   renderRuleFilters();
+  renderLevelDistribution();
   renderRules();
   renderScanRuleOptions();
+  closeBatchPreview();
+  renderBatchBar();
 }
 
 async function loadFiles() {
@@ -184,6 +193,19 @@ function renderRuleFilters() {
   scanLevel.innerHTML = '<option value="">全部级别</option>'
     + state.levels.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join('');
   if (state.levels.includes(scanLevelCurrent)) scanLevel.value = scanLevelCurrent;
+
+  const batchLevel = el('batch-level');
+  const batchLevelCurrent = batchLevel.value;
+  batchLevel.innerHTML = state.levels.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join('');
+  if (state.levels.includes(batchLevelCurrent)) batchLevel.value = batchLevelCurrent;
+}
+
+// 全部规则按级别的分布，与批量预演里的"改完之后"对数用
+function renderLevelDistribution() {
+  const text = state.levels
+    .map((item) => `${item} ${state.levelDistribution[item] || 0} 条`)
+    .join('　');
+  el('rule-level-dist').textContent = `级别分布（全部规则）：${text}，共 ${state.rulesTotal} 条`;
 }
 
 function renderFileFilters() {
@@ -213,6 +235,7 @@ function renderScanFileOptions() {
 function renderRules() {
   const body = el('rule-body');
   body.innerHTML = state.rules.map((item) => `<tr>
+      <td class="check-col"><input type="checkbox" class="rule-select" data-id="${escapeHtml(item.id)}"${state.selectedRuleIds.has(item.id) ? ' checked' : ''}></td>
       <td class="mono">${escapeHtml(item.code)}</td>
       <td>${escapeHtml(item.name)}</td>
       <td><span class="tag ${levelClass(item.level)}">${escapeHtml(item.level)}</span></td>
@@ -227,6 +250,26 @@ function renderRules() {
       </td>
     </tr>`).join('');
   el('rule-empty').classList.toggle('hidden', state.rules.length > 0);
+  const listedIds = state.rules.map((item) => item.id);
+  const selectedListed = listedIds.filter((id) => state.selectedRuleIds.has(id));
+  const selectAll = el('rule-select-all');
+  selectAll.checked = listedIds.length > 0 && selectedListed.length === listedIds.length;
+  selectAll.indeterminate = selectedListed.length > 0 && selectedListed.length < listedIds.length;
+}
+
+// 批量操作条：选中至少一条才出现，清空选择时把预演也收起来
+function renderBatchBar() {
+  const count = state.selectedRuleIds.size;
+  el('batch-bar').classList.toggle('hidden', count === 0);
+  el('batch-count').textContent = `已选 ${count} 条`;
+  if (count === 0) closeBatchPreview();
+}
+
+function closeBatchPreview() {
+  state.batchPlan = null;
+  const box = el('batch-preview');
+  box.classList.add('hidden');
+  box.innerHTML = '';
 }
 
 function renderFiles() {
@@ -350,6 +393,116 @@ async function submitFile(event) {
   }
 }
 
+function levelTag(level) {
+  return `<span class="tag ${levelClass(level)}">${escapeHtml(level)}</span>`;
+}
+
+// 级别分布的前后对照：提示 3 → 5 条　警告 4 → 2 条　…
+function levelTransitionText(before, after) {
+  return state.levels
+    .map((item) => `${item} ${before[item] || 0} → ${after[item] || 0} 条`)
+    .join('　');
+}
+
+// 预演：把选中的规则与目标级别交给服务端算一遍，页面只负责照实展示
+async function previewBatch() {
+  clearNotice();
+  clearFieldMarks();
+  try {
+    const plan = await request('/api/rules/batch-level/preview', {
+      method: 'POST',
+      body: JSON.stringify({ ruleIds: Array.from(state.selectedRuleIds), level: el('batch-level').value }),
+    });
+    state.batchPlan = plan;
+    renderBatchPreview(plan);
+  } catch (err) {
+    notify(err.message, 'error');
+    markField(err.field);
+  }
+}
+
+function renderBatchPreview(plan) {
+  const rows = [];
+  plan.changes.forEach((change) => {
+    rows.push(`<tr>
+      <td class="mono">${escapeHtml(change.code)}</td>
+      <td>${escapeHtml(change.name)}</td>
+      <td>${levelTag(change.from)}</td>
+      <td>${levelTag(change.to)}</td>
+      <td>按新约定调整</td>
+    </tr>`);
+  });
+  plan.skipped.forEach((item) => {
+    rows.push(`<tr class="skip-row">
+      <td class="mono">${escapeHtml(item.code || '—')}</td>
+      <td>${escapeHtml(item.name || item.id)}</td>
+      <td>${item.from ? levelTag(item.from) : '—'}</td>
+      <td>—</td>
+      <td>${escapeHtml(item.reason)}</td>
+    </tr>`);
+  });
+
+  const impactLines = [];
+  impactLines.push(`这一批里启用 ${plan.enabledCount} 条、停用 ${plan.disabledCount} 条。`);
+  if (plan.lastScan) {
+    impactLines.push(`上一轮结果（扫描时刻 ${formatTime(plan.lastScan.scannedAt)}）里有 ${plan.lastScan.hitsToRelevel} 条命中会跟着换级别，命中按级别：${levelTransitionText(plan.lastScan.byLevelBefore, plan.lastScan.byLevelAfter)}。`);
+    if (plan.lastScan.recheck.length) {
+      const items = plan.lastScan.recheck
+        .map((hit) => `<li><span class="mono">${escapeHtml(hit.code)} ${escapeHtml(hit.path)}:${hit.lineNo}</span> ${escapeHtml(hit.lineText)}</li>`)
+        .join('');
+      impactLines.push(`有 ${plan.lastScan.recheck.length} 条已忽略的命中需要重新确认：<ul class="recheck-list">${items}</ul>`);
+    } else {
+      impactLines.push('没有已忽略的命中受影响。');
+    }
+  } else {
+    impactLines.push('还没有上一轮扫描结果，没有命中会跟着换级别。');
+  }
+
+  const rulesTotal = Object.values(plan.rulesByLevel.after).reduce((sum, num) => sum + num, 0);
+  el('batch-preview').innerHTML = `
+    <h3>预演：一共 ${plan.total} 条，目标级别 ${levelTag(plan.targetLevel)}　实际要改 ${plan.changes.length} 条、跳过 ${plan.skipped.length} 条</h3>
+    <div class="table-wrap">
+      <table class="grid preview-grid">
+        <thead><tr><th>编码</th><th>名称</th><th>当前级别</th><th>改为</th><th>说明</th></tr></thead>
+        <tbody>${rows.join('')}</tbody>
+      </table>
+    </div>
+    <p class="preview-line">改完后全部规则按级别：${levelTransitionText(plan.rulesByLevel.before, plan.rulesByLevel.after)}（共 ${rulesTotal} 条）</p>
+    <div class="preview-block">
+      <h4>连带影响</h4>
+      ${impactLines.map((line) => `<p class="preview-line">${line}</p>`).join('')}
+    </div>
+    <div class="form-actions">
+      <button type="button" id="batch-confirm"${plan.changes.length ? '' : ' disabled'}>确认执行</button>
+      <button type="button" id="batch-cancel" class="ghost">取消</button>
+    </div>`;
+  el('batch-preview').classList.remove('hidden');
+}
+
+// 执行：服务端在最新数据上重新算一遍再落盘，返回的明细与预演同构
+async function confirmBatch() {
+  const plan = state.batchPlan;
+  if (!plan) return;
+  clearNotice();
+  clearFieldMarks();
+  try {
+    const result = await request('/api/rules/batch-level', {
+      method: 'POST',
+      body: JSON.stringify({ ruleIds: Array.from(state.selectedRuleIds), level: plan.targetLevel }),
+    });
+    const breakdown = result.skippedBreakdown || { disabled: 0, sameLevel: 0, missing: 0 };
+    notify(`批量改级别完成：改了 ${result.changes.length} 条；跳过 ${result.skipped.length} 条（停用 ${breakdown.disabled} 条、已是目标级别 ${breakdown.sameLevel} 条、不存在 ${breakdown.missing} 条）`, 'ok');
+    state.selectedRuleIds.clear();
+    closeBatchPreview();
+    renderBatchBar();
+    await loadRules();
+    await loadLastScan();
+  } catch (err) {
+    notify(err.message, 'error');
+    markField(err.field);
+  }
+}
+
 // 扫一遍，把概要与命中清单都画出来
 async function runScan() {
   clearNotice();
@@ -365,6 +518,30 @@ async function runScan() {
   } catch (err) {
     notify(err.message, 'error');
   }
+}
+
+// 页面打开时把上一轮扫描结果拉回来，还没扫过就保持默认提示
+async function loadLastScan() {
+  const payload = await request('/api/scan/last');
+  state.lastScan = payload.scan || null;
+  if (state.lastScan) renderScan(state.lastScan);
+}
+
+function hitStateTag(stateValue) {
+  if (stateValue === '已忽略') return '<span class="tag st-ignored">已忽略</span>';
+  if (stateValue === '待重新确认') return '<span class="tag st-recheck">待重新确认</span>';
+  return '正常';
+}
+
+function hitActions(hit) {
+  if (hit.state === '已忽略') {
+    return `<button type="button" class="link" data-hit-id="${escapeHtml(hit.id)}" data-hit-state="正常">取消忽略</button>`;
+  }
+  if (hit.state === '待重新确认') {
+    return `<button type="button" class="link" data-hit-id="${escapeHtml(hit.id)}" data-hit-state="已忽略">确认忽略</button>
+      <button type="button" class="link" data-hit-id="${escapeHtml(hit.id)}" data-hit-state="正常">取消忽略</button>`;
+  }
+  return `<button type="button" class="link" data-hit-id="${escapeHtml(hit.id)}" data-hit-state="已忽略">忽略</button>`;
 }
 
 function renderScan(result) {
@@ -383,6 +560,10 @@ function renderScan(result) {
   const levelText = Object.keys(result.summary.byLevel)
     .map((key) => `${key} ${result.summary.byLevel[key]} 条`)
     .join('　');
+  const stateText = [
+    result.summary.ignored ? `已忽略 ${result.summary.ignored} 条` : '',
+    result.summary.recheck ? `待重新确认 ${result.summary.recheck} 条` : '',
+  ].filter(Boolean).join('　');
   const ruleText = result.summary.byRule
     .map((item) => `${item.code} ${item.count} 条`)
     .join('　') || '没有规则命中';
@@ -390,20 +571,25 @@ function renderScan(result) {
     .map((item) => `${item.path} ${item.count} 条`)
     .join('　') || '没有文件命中';
   summaryBox.innerHTML = `
-    <div class="summary-line"><strong>一共命中 ${result.summary.total} 条</strong>　${escapeHtml(levelText)}</div>
+    <div class="summary-line"><strong>一共命中 ${result.summary.total} 条</strong>　${escapeHtml(levelText)}${stateText ? `　${escapeHtml(stateText)}` : ''}</div>
     <div class="summary-line">按规则：${escapeHtml(ruleText)}</div>
     <div class="summary-line">按文件：${escapeHtml(fileText)}</div>`;
   summaryBox.classList.remove('hidden');
 
   const body = el('hit-body');
-  body.innerHTML = result.hits.map((hit) => `<tr>
+  body.innerHTML = result.hits.map((hit) => {
+    const rowClass = hit.state === '已忽略' ? 'hit-ignored' : (hit.state === '待重新确认' ? 'hit-recheck' : '');
+    return `<tr${rowClass ? ` class="${rowClass}"` : ''}>
       <td class="mono">${escapeHtml(hit.code)}</td>
       <td><span class="tag ${levelClass(hit.level)}">${escapeHtml(hit.level)}</span></td>
       <td>${escapeHtml(hit.ruleName)}</td>
       <td class="mono">${escapeHtml(hit.path)}</td>
       <td class="mono">${hit.lineNo}</td>
       <td class="mono line-cell">${escapeHtml(hit.lineText)}</td>
-    </tr>`).join('');
+      <td>${hitStateTag(hit.state)}</td>
+      <td class="actions">${hitActions(hit)}</td>
+    </tr>`;
+  }).join('');
   el('hit-empty').classList.toggle('hidden', result.hits.length > 0);
 }
 
@@ -411,6 +597,31 @@ function renderScan(result) {
 document.addEventListener('click', async (event) => {
   const node = event.target.closest('button');
   if (!node) return;
+
+  if (node.id === 'batch-confirm') {
+    await confirmBatch();
+    return;
+  }
+
+  if (node.id === 'batch-cancel') {
+    closeBatchPreview();
+    return;
+  }
+
+  if (node.dataset.hitId && node.dataset.hitState) {
+    clearNotice();
+    try {
+      const scan = await request(`/api/scan/last/hits/${encodeURIComponent(node.dataset.hitId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ state: node.dataset.hitState }),
+      });
+      state.lastScan = scan;
+      renderScan(scan);
+    } catch (err) {
+      notify(err.message, 'error');
+    }
+    return;
+  }
 
   if (node.dataset.ruleEdit) {
     clearNotice();
@@ -466,6 +677,26 @@ document.addEventListener('click', async (event) => {
   }
 });
 
+// 勾选框单独走 change 委托：全选只管当前列出来的这些，逐条勾选按 id 记
+document.addEventListener('change', (event) => {
+  const node = event.target;
+  if (node.id === 'rule-select-all') {
+    state.rules.forEach((item) => {
+      if (node.checked) state.selectedRuleIds.add(item.id);
+      else state.selectedRuleIds.delete(item.id);
+    });
+    renderRules();
+    renderBatchBar();
+    return;
+  }
+  if (node.classList && node.classList.contains('rule-select')) {
+    if (node.checked) state.selectedRuleIds.add(node.dataset.id);
+    else state.selectedRuleIds.delete(node.dataset.id);
+    renderRules();
+    renderBatchBar();
+  }
+});
+
 el('rule-form').addEventListener('submit', submitRule);
 el('file-form').addEventListener('submit', submitFile);
 el('rule-new').addEventListener('click', () => {
@@ -505,6 +736,12 @@ el('file-filter-reset').addEventListener('click', () => {
   loadFiles().catch((err) => notify(err.message, 'error'));
 });
 el('scan-run').addEventListener('click', runScan);
+el('batch-preview-btn').addEventListener('click', previewBatch);
+el('batch-clear').addEventListener('click', () => {
+  state.selectedRuleIds.clear();
+  renderRules();
+  renderBatchBar();
+});
 el('rule-filter-level').addEventListener('change', () => {
   loadRules().catch((err) => notify(err.message, 'error'));
 });
@@ -515,9 +752,10 @@ el('operator').addEventListener('change', () => {
   window.localStorage.setItem(OPERATOR_KEY, currentOperator());
 });
 
-// 页面打开时先把规则与文件都拉一遍，扫描的范围下拉依赖这两份清单
+// 页面打开时先把规则与文件都拉一遍，扫描的范围下拉依赖这两份清单；再把上一轮扫描结果补回来
 restoreOperator();
 loadHealth();
 loadRules()
   .then(loadFiles)
+  .then(loadLastScan)
   .catch((err) => notify(err.message, 'error'));

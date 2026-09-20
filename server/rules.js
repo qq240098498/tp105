@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { load, save, LEVELS, STATUSES, FILE_TYPES, MAX_CODE_LENGTH, MAX_RULE_NAME_LENGTH, MAX_PATTERN_LENGTH, MAX_NOTE_LENGTH } = require('./store');
 const { ApiError, pickText } = require('./errors');
+const { pruneScanHits } = require('./scan');
 
 // 规则编码固定成大写字母加分段的数字，方便在命中清单里引用
 const CODE_PATTERN = /^[A-Z]{2,6}-\d{2,4}$/;
@@ -100,12 +101,18 @@ function listRules(options) {
   }
 
   const usedFileTypes = Array.from(new Set(data.rules.map((item) => item.fileType)));
+  // 全部规则按级别的分布，不受筛选影响，页面上据此与批量预演对数
+  const levelDistribution = {};
+  LEVELS.forEach((item) => { levelDistribution[item] = 0; });
+  data.rules.forEach((item) => { levelDistribution[item.level] = (levelDistribution[item.level] || 0) + 1; });
   return {
     rules: sortRules(list),
     levels: LEVELS.slice(),
     statuses: STATUSES.slice(),
     fileTypes: FILE_TYPES.slice(),
     usedFileTypes,
+    levelDistribution,
+    rulesTotal: data.rules.length,
   };
 }
 
@@ -160,6 +167,7 @@ function deleteRule(id) {
   const index = data.rules.findIndex((item) => item.id === id);
   if (index === -1) throw new ApiError(404, 'RULE_NOT_FOUND', '这条规则不存在或已被删除', '');
   const [removed] = data.rules.splice(index, 1);
+  pruneScanHits(data, (hit) => hit.ruleId !== removed.id);
   save(data);
   return { id: removed.id, code: removed.code, name: removed.name };
 }
