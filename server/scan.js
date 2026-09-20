@@ -11,9 +11,20 @@ function levelOrder(level) {
   return index === -1 ? LEVELS.length : index;
 }
 
-// 扫一遍：启用的规则逐条去比对范围内的文件，命中记到具体行上
-function scan(options) {
+// 一条忽略记录对应哪条命中：规则、文件、行号与那一行的内容都要一致，
+// 文件内容改动导致行号挪动后不会张冠李戴
+function findIgnore(ignores, hit) {
+  return ignores.find((item) => item.ruleId === hit.ruleId
+    && item.fileId === hit.fileId
+    && item.lineNo === hit.lineNo
+    && item.lineText === hit.lineText);
+}
+
+// 比对核心：规则与文件都由调用方给入，正式扫描与批量改级别的预演走同一段逻辑，
+// 两边算出来的命中条数才不会对不上
+function scanCore(options) {
   const input = options && typeof options === 'object' ? options : {};
+  const data = input.data;
   const level = pickText(input.level);
   const fileId = pickText(input.fileId);
   const ruleId = pickText(input.ruleId);
@@ -21,8 +32,6 @@ function scan(options) {
   if (level && !LEVELS.includes(level)) {
     throw new ApiError(400, 'LEVEL_INVALID', `级别只能是 ${LEVELS.join('、')} 其中之一`, 'scanLevel');
   }
-
-  const data = load();
 
   let scopeFile = null;
   if (fileId) {
@@ -46,13 +55,14 @@ function scan(options) {
     .filter((item) => !level || item.level === level);
 
   const filesInScope = scopeFile ? [scopeFile] : data.files;
+  const ignores = Array.isArray(data.ignores) ? data.ignores : [];
 
   const hits = [];
   rulesUsed.forEach((rule) => {
     filesInScope.filter((file) => ruleAppliesToFile(rule, file)).forEach((file) => {
       file.content.split('\n').forEach((text, index) => {
         if (text.includes(rule.pattern)) {
-          hits.push({
+          const hit = {
             ruleId: rule.id,
             code: rule.code,
             ruleName: rule.name,
@@ -63,7 +73,18 @@ function scan(options) {
             fileType: file.type,
             lineNo: index + 1,
             lineText: text.trim(),
-          });
+          };
+          const ignored = findIgnore(ignores, hit);
+          if (ignored) {
+            hit.ignored = true;
+            hit.ignoreId = ignored.id;
+            hit.ignoreLevel = ignored.level;
+            // 忽略时记的是当时的级别，规则级别调整过之后这条忽略就得重新确认
+            hit.needsReconfirm = ignored.level !== hit.level;
+          } else {
+            hit.ignored = false;
+          }
+          hits.push(hit);
         }
       });
     });
@@ -95,6 +116,7 @@ function scan(options) {
     byFileMap.get(key).count += 1;
   });
 
+  const ignoredHits = hits.filter((hit) => hit.ignored);
   return {
     scannedAt: new Date().toISOString(),
     enabledRules: enabled.length,
@@ -106,6 +128,8 @@ function scan(options) {
     hits,
     summary: {
       total: hits.length,
+      ignored: ignoredHits.length,
+      reconfirm: ignoredHits.filter((hit) => hit.needsReconfirm).length,
       byLevel,
       byRule: Array.from(byRuleMap.values()).sort((a, b) => (a.code < b.code ? -1 : 1)),
       byFile: Array.from(byFileMap.values()).sort((a, b) => (a.path < b.path ? -1 : 1)),
@@ -113,4 +137,16 @@ function scan(options) {
   };
 }
 
-module.exports = { scan, ruleAppliesToFile, levelOrder };
+// 扫一遍：启用的规则逐条去比对范围内的文件，命中记到具体行上
+function scan(options) {
+  const input = options && typeof options === 'object' ? options : {};
+  const data = load();
+  return scanCore({
+    data,
+    level: input.level,
+    fileId: input.fileId,
+    ruleId: input.ruleId,
+  });
+}
+
+module.exports = { scan, scanCore, ruleAppliesToFile, levelOrder, findIgnore };

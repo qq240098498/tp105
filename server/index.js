@@ -30,6 +30,23 @@ app.post('/api/rules', (req, res) => {
   }
 });
 
+// 批量改级别：先预演，把条数、逐条变化、分布与连带影响都列清楚，确认后再执行
+app.post('/api/rules/batch-level/preview', (req, res) => {
+  try {
+    res.json(api.planBatchLevel(req.body));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/rules/batch-level', (req, res) => {
+  try {
+    res.json(api.applyBatchLevel(req.body));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 app.get('/api/rules/:id', (req, res) => {
   try {
     res.json(api.getRule(req.params.id));
@@ -102,6 +119,39 @@ app.post('/api/scan', (req, res) => {
       fileId: body.fileId,
       ruleId: body.ruleId,
     }));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// 被忽略的命中：可以忽略当前命中、按新级别重新确认，也可以取消忽略
+app.get('/api/ignores', (_req, res) => {
+  try {
+    res.json(api.listIgnores());
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/ignores', (req, res) => {
+  try {
+    res.status(201).json(api.ignoreHit(req.body));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/ignores/:id/reconfirm', (req, res) => {
+  try {
+    res.json(api.reconfirmIgnore(req.params.id));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.delete('/api/ignores/:id', (req, res) => {
+  try {
+    res.json(api.cancelIgnore(req.params.id));
   } catch (err) {
     sendError(res, err);
   }

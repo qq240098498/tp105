@@ -34,6 +34,7 @@
           <button type="button" id="rule-filter-apply">筛选</button>
           <button type="button" id="rule-filter-reset" class="ghost">重置</button>
           <button type="button" id="rule-refresh" class="ghost">刷新</button>
+          <button type="button" id="rule-batch-level">批量改级别</button>
           <button type="button" id="rule-new">新建规则</button>
         </div>
       </div>
@@ -41,6 +42,7 @@
         <table class="grid">
           <thead>
             <tr>
+              <th class="col-check"><input type="checkbox" id="rule-select-all" title="全选当前清单"></th>
               <th>编码</th>
               <th>名称</th>
               <th>级别</th>
@@ -55,6 +57,7 @@
           <tbody id="rule-body"></tbody>
         </table>
       </div>
+      <p class="rule-distribution" id="rule-distribution"></p>
       <p class="empty-tip hidden" id="rule-empty">当前筛选条件下没有规则</p>
 
       <form class="entry-form hidden" id="rule-form" autocomplete="off">
@@ -149,6 +152,7 @@
               <th>文件</th>
               <th>行号</th>
               <th>那一行的内容</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody id="hit-body"></tbody>
@@ -157,6 +161,30 @@
       <p class="empty-tip hidden" id="hit-empty">这一轮没有命中</p>
     </section>
   </main>
+
+  <div class="modal-mask hidden" id="batch-modal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="batch-title">
+      <div class="modal-head">
+        <h3 id="batch-title">批量改级别 · 预演</h3>
+        <button type="button" class="link" id="batch-close">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="batch-target">
+          <label>改成的级别
+            <select id="batch-level"></select>
+          </label>
+          <button type="button" id="batch-preview" class="ghost">生成预演</button>
+          <span class="batch-selected" id="batch-selected-count"></span>
+        </div>
+        <p class="batch-error hidden" id="batch-error"></p>
+        <div class="batch-preview hidden" id="batch-preview-box"></div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="batch-apply" disabled>按预演执行</button>
+        <button type="button" id="batch-cancel" class="ghost">取消</button>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

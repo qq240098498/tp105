@@ -335,6 +335,23 @@ function normalizeFile(item, fallbackIndex) {
   };
 }
 
+// 被忽略的命中：记录忽略时规则的级别，规则后来改了级别就要重新确认
+function normalizeIgnore(item, fallbackIndex) {
+  const source = item && typeof item === 'object' ? item : {};
+  const createdAt = typeof source.createdAt === 'string' && source.createdAt ? source.createdAt : new Date().toISOString();
+  const lineNo = Number(source.lineNo);
+  return {
+    id: typeof source.id === 'string' && source.id ? source.id : `ignore-restored-${fallbackIndex + 1}`,
+    ruleId: typeof source.ruleId === 'string' ? source.ruleId : '',
+    fileId: typeof source.fileId === 'string' ? source.fileId : '',
+    lineNo: Number.isInteger(lineNo) && lineNo >= 1 ? lineNo : 0,
+    lineText: typeof source.lineText === 'string' ? source.lineText : '',
+    level: LEVELS.includes(source.level) ? source.level : LEVELS[0],
+    createdAt,
+    updatedAt: typeof source.updatedAt === 'string' && source.updatedAt ? source.updatedAt : createdAt,
+  };
+}
+
 // 整份数据保证规则与文件结构一致，缺编号、缺名称、缺路径的条目一律丢掉
 function normalize(raw) {
   const source = raw && typeof raw === 'object' ? raw : {};
@@ -368,7 +385,22 @@ function normalize(raw) {
     files.push(file);
   });
 
-  return { rules, files };
+  // 忽略记录按编号去重；规则或文件已经不存在的记录留着也没法对应，直接丢掉
+  const rawIgnores = Array.isArray(source.ignores) ? source.ignores : [];
+  const ruleIds = new Set(rules.map((item) => item.id));
+  const fileIds = new Set(files.map((item) => item.id));
+  const seenIgnoreIds = new Set();
+  const ignores = [];
+  rawIgnores.forEach((item, index) => {
+    const ignore = normalizeIgnore(item, index);
+    if (!ignore.id || !ignore.ruleId || !ignore.fileId || !ignore.lineNo) return;
+    if (!ruleIds.has(ignore.ruleId) || !fileIds.has(ignore.fileId)) return;
+    if (seenIgnoreIds.has(ignore.id)) return;
+    seenIgnoreIds.add(ignore.id);
+    ignores.push(ignore);
+  });
+
+  return { rules, files, ignores };
 }
 
 // 读取数据文件：文件缺失或内容损坏时回落到初始数据并立刻补写
@@ -377,7 +409,7 @@ function load() {
     const raw = fs.readFileSync(DATA_FILE, 'utf8');
     return normalize(JSON.parse(raw));
   } catch (err) {
-    const data = { rules: seedRules(), files: seedFiles() };
+    const data = { rules: seedRules(), files: seedFiles(), ignores: [] };
     save(data);
     return data;
   }
@@ -399,6 +431,7 @@ module.exports = {
   normalize,
   normalizeRule,
   normalizeFile,
+  normalizeIgnore,
   LEVELS,
   STATUSES,
   FILE_TYPES,
